@@ -1,0 +1,34 @@
+name: Build Commit
+
+on:
+  push:
+    branches:
+      - fork-*
+
+permissions:
+  packages: write
+
+jobs:
+  build__ml_metadata_server:
+    name: Build - ML Metadata Server
+    uses: ./.github/workflows/build_image_TEMPLATE.yml
+    secrets: inherit
+    with:
+      image_names: ghcr.io/${{ github.repository_owner }}/ci/ml_metadata_store_server
+
+      metadata_title: "ML-Metadata Server"
+      metadata_description: "Google ML Metadata Server"
+
+      tag_with_latest: false
+      tag_with_semver: false
+      tag_with_sha: true
+
+      build_file: ./ml_metadata/tools/docker_server/Dockerfile
+      build_context: .
+      build_platforms: |-
+        linux/amd64
+        linux/arm64
+      build_registry_cache: ghcr.io/${{ github.repository_owner }}/ci/ml_metadata_store_server:build-cache
+
+      login_to_ghcr: true
+      login_to_docker: false

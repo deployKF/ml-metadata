@@ -1,0 +1,128 @@
+name: Build Image (TEMPLATE)
+on:
+  workflow_call:
+    inputs:
+      image_names:
+        required: true
+        description: "the images to push, including registry prefix, whitespace separated"
+        type: string
+
+      metadata_title:
+        required: true
+        description: "the title of the image"
+        type: string
+      metadata_description:
+        required: true
+        description: "the description of the image"
+        type: string
+
+      tag_with_latest:
+        default: false
+        description: "if true, image tags will include 'latest'"
+        type: boolean
+      tag_with_semver:
+        default: false
+        description: "if true, image tags will include the version (from git tag event, without 'v' prefix)"
+        type: boolean
+      tag_with_sha:
+        default: false
+        description: "if true, image tags will include the commit SHA (both short and long)"
+        type: boolean
+
+      build_file:
+        required: true
+        description: "path to Dockerfile"
+        type: string
+      build_context:
+        required: true
+        description: "path to build context folder"
+        type: string
+      build_platforms:
+        required: true
+        description: "docker buildx platforms to build for, whitespace separated"
+        type: string
+      build_registry_cache:
+        required: true
+        description: "an image to use as a registry-type build cache (registry + image + tag)"
+        type: string
+
+      login_to_ghcr:
+        default: false
+        description: "if true, login to GitHub Container Registry with the GITHUB_TOKEN"
+        type: boolean
+      login_to_docker:
+        default: false
+        description: "if true, login to DockerHub using the DOCKER_USERNAME and DOCKER_PASSWORD secrets in the repository"
+        type: boolean
+
+jobs:
+  build_image:
+    name: Build '${{ inputs.metadata_title }}' Image
+    runs-on: ubuntu-latest
+    steps:
+      ## We need to sanitize some inputs before we can use them:
+      ##   - the `build_registry_cache` must be lowercase so we can safely use
+      ##     it in `cache-from` and `cache-to` options
+      - name: Sanitize Inputs
+        id: sanitize_inputs
+        env:
+          build_registry_cache: ${{ inputs.build_registry_cache }}
+        run: |
+          echo "build_registry_cache=${build_registry_cache@L}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Install Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        if: ${{ inputs.login_to_ghcr }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        if: ${{ inputs.login_to_docker }}
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Generate Image Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.image_names }}
+          flavor: |
+            latest=${{ inputs.tag_with_latest }}
+          tags: |
+            type=semver,priority=1000,pattern={{version}},enable=${{ inputs.tag_with_semver }}
+            type=semver,priority=900,pattern={{major}}.{{minor}},enable=${{ inputs.tag_with_semver }}
+            type=sha,priority=200,prefix=sha-,format=short,enable=${{ inputs.tag_with_sha }}
+            type=sha,priority=100,prefix=sha-,format=long,enable=${{ inputs.tag_with_sha }}
+          labels: |
+            org.opencontainers.image.title=${{ inputs.metadata_title }}
+            org.opencontainers.image.description=${{ inputs.metadata_description }}
+          annotations: |
+            org.opencontainers.image.title=${{ inputs.metadata_title }}
+            org.opencontainers.image.description=${{ inputs.metadata_description }}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v5
+        with:
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=registry,ref=${{ steps.sanitize_inputs.outputs.build_registry_cache }}
+          cache-to: type=registry,ref=${{ steps.sanitize_inputs.outputs.build_registry_cache }},mode=max
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.build_file }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ inputs.build_platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
